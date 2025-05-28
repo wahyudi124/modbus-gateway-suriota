@@ -6,6 +6,9 @@
 #include "Constants.h"
 #include "FileOperations.h"
 
+// Forward declaration
+void sendResponse(String response);
+
 // Command handler functions
 void processCommand(String command);
 void handleModbusData(String action, JsonDocument& doc);
@@ -17,6 +20,7 @@ void handleLglistData(String action, JsonDocument& doc);
 
 // Implementation of command handler functions
 inline void processCommand(String command) {
+  // Note: Mutex handling is now done in fileTask
   DynamicJsonDocument doc(8192);
   DeserializationError error = deserializeJson(doc, command);
 

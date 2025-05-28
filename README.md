@@ -182,3 +182,75 @@ Example error response:
 ## Caching
 
 The device implements caching for configuration files to improve performance. The cache is automatically invalidated when files are modified.
+
+
+# FreeRTOS Implementation for Suriota BLE Configuration
+
+This document explains the FreeRTOS implementation in the Suriota BLE Configuration project.
+
+## Overview
+
+The project has been refactored to use FreeRTOS for better task management, improved responsiveness, and more efficient resource utilization. The implementation uses multiple tasks, a command queue, and a mutex for file access synchronization.
+
+## FreeRTOS Components
+
+### Tasks
+
+1. **BLE Task (`bleTask`)**: 
+   - Runs on Core 1 (Arduino loop core)
+   - Handles BLE initialization and communication
+   - Processes incoming BLE commands and queues them for processing
+   - Priority: 1
+
+2. **File Task (`fileTask`)**: 
+   - Runs on Core 0 (free core)
+   - Processes commands from the queue
+   - Handles all file operations with mutex protection
+   - Priority: 2 (higher than BLE task)
+
+### Synchronization Primitives
+
+1. **Command Queue (`commandQueue`)**:
+   - Size: 10 commands
+   - Used to pass commands from the BLE task to the File task
+   - Decouples command reception from command processing
+
+2. **File Mutex (`fileMutex`)**:
+   - Protects file operations from concurrent access
+   - Ensures data integrity when reading/writing configuration files
+
+## Command Flow
+
+1. BLE client sends a command to the device
+2. `MyCharacteristicCallbacks::onWrite` receives the command
+3. Command is parsed and validated in `processBuffer()`
+4. Valid command is converted to JSON and sent to `queueCommand()`
+5. `queueCommand()` adds the command to the command queue
+6. `fileTask` retrieves the command from the queue
+7. `fileTask` takes the file mutex before processing the command
+8. Command is processed by `processCommand()`
+9. Response is sent back to the BLE client
+10. File mutex is released
+
+## Benefits
+
+1. **Improved Responsiveness**: BLE communication is not blocked by file operations
+2. **Better Resource Utilization**: Tasks run on separate cores, utilizing the dual-core ESP32
+3. **Enhanced Stability**: Mutex protection prevents file corruption from concurrent access
+4. **Scalability**: Additional tasks can be added for future functionality
+
+## File Structure
+
+- **Suriota2105205od.ino**: Main file with setup() and loop()
+- **FreeRTOSTasks.h**: Contains task definitions and implementations
+- **BLEHandlers.h**: Modified to use queueCommand() instead of direct processing
+- **CommandHandlers.h**: Command processing functions
+- **FileOperations.h**: File operations with mutex protection
+- **Cache.h**: Cache management functions
+- **Constants.h**: Project constants and definitions
+
+## Usage Notes
+
+- The main loop is now empty as all functionality is handled by FreeRTOS tasks
+- File operations should only be performed in the file task to maintain synchronization
+- BLE responses are still sent directly from any task for immediate feedback

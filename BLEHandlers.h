@@ -10,7 +10,7 @@
 
 // Forward declarations
 void sendResponse(String response);
-void processCommand(String command);
+void queueCommand(String command);
 
 // Global BLE variables
 extern BLEServer* pServer;
@@ -381,7 +381,7 @@ private:
                 serializeJson(doc, jsonStr);
                 Serial.print("Generated JSON: ");
                 Serial.println(jsonStr);
-                processCommand(jsonStr);
+                queueCommand(jsonStr);
             } else {
                 Serial.println("Error: Invalid command format (need at least action and dataset)");
                 sendResponse("Error: Invalid command format");
