@@ -1,5 +1,5 @@
 
-# Suriota BLE Configuration Interface
+# Suriota BLE Configuration Interface (Suriota Gateway)
 
 This document describes the BLE interface for configuring the Suriota device. The device exposes a BLE service that allows CRUD (Create, Read, Update, Delete) operations on various configuration datasets.
 
