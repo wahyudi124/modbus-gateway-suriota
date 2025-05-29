@@ -53,6 +53,9 @@ void setup() {
   // Initialize files
   initFiles();
   
+  // Load all configurations to cache
+  loadAllConfigToCache();
+  
   // Create tasks
   xTaskCreatePinnedToCore(
     bleTask,          // Task function

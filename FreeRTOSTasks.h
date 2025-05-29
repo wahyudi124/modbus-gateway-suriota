@@ -36,6 +36,7 @@ struct CommandData {
 void bleTask(void *parameter);
 void fileTask(void *parameter);
 void initFiles();
+void loadAllConfigToCache();
 
 // Queue command function
 void queueCommand(String command) {
@@ -173,6 +174,46 @@ void initFiles() {
     }
     
     xSemaphoreGive(fileMutex);
+  }
+}
+
+// Load all configuration files to cache
+void loadAllConfigToCache() {
+  if (xSemaphoreTake(fileMutex, portMAX_DELAY) == pdTRUE) {
+    Serial.println("Loading all configurations to cache...");
+    
+    // Array of all configuration file paths
+    const char* configPaths[] = {
+      DEVICES_PATH,
+      MODBUS_CONFIG_PATH,
+      CONFIG_PATH,
+      LOGGING_CONFIG_PATH,
+      CLIST_PATH,
+      LGLIST_PATH
+    };
+    
+    // Load each file into cache
+    for (const char* path : configPaths) {
+      if (LittleFS.exists(path)) {
+        File file = LittleFS.open(path, "r");
+        if (file) {
+          String content = file.readString();
+          file.close();
+          updateCache(path, content);
+          Serial.print("Loaded to cache: ");
+          Serial.println(path);
+        } else {
+          Serial.print("Failed to open file for reading: ");
+          Serial.println(path);
+        }
+      } else {
+        Serial.print("File does not exist: ");
+        Serial.println(path);
+      }
+    }
+    
+    xSemaphoreGive(fileMutex);
+    Serial.println("All configurations loaded to cache");
   }
 }
 
