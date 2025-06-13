@@ -5,6 +5,7 @@
 #include <ArduinoJson.h>
 #include <SPI.h>
 #include <Ethernet.h>
+#include <ModbusMaster.h>
 #include "Cache.h"
 
 // Tipe data yang didukung untuk register Modbus
@@ -48,6 +49,10 @@ struct RegisterConfig {
   uint8_t id;
 };
 
+// Definisi pin untuk Serial2 (Modbus RTU)
+#define RX_PIN 15
+#define TX_PIN 16
+
 class ModbusHandler {
 public:
   ModbusHandler() : devices(nullptr), registers(nullptr), deviceCount(0), registerCount(0) {}
@@ -75,7 +80,26 @@ public:
     Serial.println(Ethernet.localIP());
     
     // Inisialisasi Serial2 untuk Modbus RTU
-    Serial2.begin(9600, SERIAL_8N1, 15, 16);
+    Serial2.begin(9600, SERIAL_8N1, RX_PIN, TX_PIN);
+    
+    // Tunggu Serial2 siap
+    delay(100);
+    
+    // Tampilkan informasi konfigurasi
+    Serial.println("Modbus handler initialized with:");
+    Serial.print("Device count: ");
+    Serial.println(deviceCount);
+    Serial.print("Register count: ");
+    Serial.println(registerCount);
+    
+    for (uint8_t i = 0; i < deviceCount; i++) {
+      Serial.print("Device: ");
+      Serial.print(devices[i].name);
+      Serial.print(", Type: ");
+      Serial.print(devices[i].modbus_type);
+      Serial.print(", ID: ");
+      Serial.println(devices[i].id);
+    }
     
     return true;
   }
@@ -119,6 +143,7 @@ private:
   RegisterConfig* registers;
   uint8_t deviceCount;
   uint8_t registerCount;
+  ModbusMaster node;
   
   bool loadConfig(const char* devicesPath, const char* modbusConfigPath) {
     DynamicJsonDocument devicesDoc(4096);
@@ -197,15 +222,29 @@ private:
     
     // Setup parity
     if (dev.parity == "none") {
-      Serial2.begin(dev.baudrate, SERIAL_8N1);
+      Serial2.begin(dev.baudrate, SERIAL_8N1, RX_PIN, TX_PIN);
     } else if (dev.parity == "even") {
-      Serial2.begin(dev.baudrate, SERIAL_8E1);
+      Serial2.begin(dev.baudrate, SERIAL_8E1, RX_PIN, TX_PIN);
     } else if (dev.parity == "odd") {
-      Serial2.begin(dev.baudrate, SERIAL_8O1);
+      Serial2.begin(dev.baudrate, SERIAL_8O1, RX_PIN, TX_PIN);
     }
     
     // Tunggu Serial2 siap
-    delay(50);
+    delay(100);
+    
+    // Set slave ID
+    node.begin(dev.id, Serial2);
+    
+    // Set timeout yang lebih lama
+    //node.setTimeout(1000);
+    
+    // Debug info
+    Serial.print("Setting up RTU for device: ");
+    Serial.print(dev.name);
+    Serial.print(", ID: ");
+    Serial.print(dev.id);
+    Serial.print(", Baudrate: ");
+    Serial.println(dev.baudrate);
   }
   
   IPAddress setupTCP(const DeviceConfig& dev) {
@@ -218,83 +257,112 @@ private:
   float readModbusValue(const RegisterConfig& reg, const DeviceConfig& dev) {
     uint16_t result[4] = {0}; // Buffer untuk menyimpan hasil pembacaan (maksimal 4 register untuk FLOAT64)
     bool success = false;
+    uint8_t numRegisters = 1;
+    
+    // Tentukan jumlah register berdasarkan tipe data
+    if (reg.data_type == UINT32 || reg.data_type == INT32 || reg.data_type == FLOAT32 || reg.data_type == FLOAT) {
+      numRegisters = 2;
+    } else if (reg.data_type == FLOAT64) {
+      numRegisters = 4;
+    }
+    
+    // Debug info
+    Serial.print("Reading register: ");
+    Serial.print(reg.name);
+    Serial.print(", Address: ");
+    Serial.print(reg.address);
+    Serial.print(", Function code: ");
+    Serial.print(reg.function_code);
+    Serial.print(", Device: ");
+    Serial.println(dev.name);
     
     // Setup koneksi Modbus sesuai tipe
     if (dev.modbus_type == "RTU") {
       setupRTU(dev);
       
-      // Implementasi sederhana Modbus RTU
-      uint8_t txBuffer[8];
-      uint8_t rxBuffer[256];
-      uint8_t rxLen = 0;
+      // Bersihkan buffer
+      while (Serial2.available()) Serial2.read();
       
-      // Buat request Modbus RTU
-      txBuffer[0] = dev.id;
-      txBuffer[1] = reg.function_code;
-      txBuffer[2] = highByte(reg.address);
-      txBuffer[3] = lowByte(reg.address);
+      uint8_t result_code = 0xFF;
       
-      uint8_t numRegisters = 1;
-      if (reg.data_type == UINT32 || reg.data_type == INT32 || reg.data_type == FLOAT32) {
-        numRegisters = 2;
-      } else if (reg.data_type == FLOAT64) {
-        numRegisters = 4;
-      }
-      
-      txBuffer[4] = 0;
-      txBuffer[5] = numRegisters;
-      
-      // Hitung CRC
-      uint16_t crc = 0xFFFF;
-      for (int i = 0; i < 6; i++) {
-        crc ^= txBuffer[i];
-        for (int j = 0; j < 8; j++) {
-          if (crc & 0x0001) {
-            crc >>= 1;
-            crc ^= 0xA001;
-          } else {
-            crc >>= 1;
+      // Baca register sesuai function code
+      switch (reg.function_code) {
+        case 1: // Read Coils
+          result_code = node.readCoils(reg.address, 1);
+          if (result_code == node.ku8MBSuccess) {
+            result[0] = node.getResponseBuffer(0);
+            success = true;
           }
-        }
-      }
-      
-      txBuffer[6] = lowByte(crc);
-      txBuffer[7] = highByte(crc);
-      
-      // Kirim request
-      Serial2.flush();
-      for (int i = 0; i < 8; i++) {
-        Serial2.write(txBuffer[i]);
-      }
-      
-      // Tunggu respons
-      unsigned long startTime = millis();
-      while ((Serial2.available() < 5) && (millis() - startTime < 1000)) {
-        delay(1);
-      }
-      
-      // Baca respons
-      if (Serial2.available() > 0) {
-        rxLen = 0;
-        while (Serial2.available() > 0 && rxLen < 256) {
-          rxBuffer[rxLen++] = Serial2.read();
-        }
-        
-        // Verifikasi respons
-        if (rxLen >= 5 && rxBuffer[0] == dev.id && rxBuffer[1] == reg.function_code) {
-          // Ambil data
-          if (reg.function_code == 1 || reg.function_code == 2) {
-            // Coils atau Discrete Inputs
-            result[0] = rxBuffer[3];
-          } else if (reg.function_code == 3 || reg.function_code == 4) {
-            // Holding atau Input Registers
+          break;
+          
+        case 2: // Read Discrete Inputs
+          result_code = node.readDiscreteInputs(reg.address, 1);
+          if (result_code == node.ku8MBSuccess) {
+            result[0] = node.getResponseBuffer(0);
+            success = true;
+          }
+          break;
+          
+        case 3: // Read Holding Registers
+          result_code = node.readHoldingRegisters(reg.address, numRegisters);
+          if (result_code == node.ku8MBSuccess) {
             for (uint8_t i = 0; i < numRegisters; i++) {
-              result[i] = (rxBuffer[3 + i * 2] << 8) | rxBuffer[4 + i * 2];
+              result[i] = node.getResponseBuffer(i);
             }
+            success = true;
           }
-          success = true;
+          break;
+          
+        case 4: // Read Input Registers
+          result_code = node.readInputRegisters(reg.address, numRegisters);
+          if (result_code == node.ku8MBSuccess) {
+            for (uint8_t i = 0; i < numRegisters; i++) {
+              result[i] = node.getResponseBuffer(i);
+            }
+            success = true;
+          }
+          break;
+      }
+      
+      if (result_code != node.ku8MBSuccess) {
+        Serial.print("Modbus RTU error for device ");
+        Serial.print(dev.name);
+        Serial.print(", register ");
+        Serial.print(reg.name);
+        Serial.print(": ");
+        Serial.println(result_code, HEX);
+        
+        // Tampilkan keterangan error
+        switch (result_code) {
+          case node.ku8MBIllegalFunction:
+            Serial.println("Illegal Function");
+            break;
+          case node.ku8MBIllegalDataAddress:
+            Serial.println("Illegal Data Address");
+            break;
+          case node.ku8MBIllegalDataValue:
+            Serial.println("Illegal Data Value");
+            break;
+          case node.ku8MBSlaveDeviceFailure:
+            Serial.println("Slave Device Failure");
+            break;
+          case node.ku8MBInvalidSlaveID:
+            Serial.println("Invalid Slave ID");
+            break;
+          case node.ku8MBInvalidFunction:
+            Serial.println("Invalid Function");
+            break;
+          case node.ku8MBResponseTimedOut:
+            Serial.println("Response Timed Out");
+            break;
+          case node.ku8MBInvalidCRC:
+            Serial.println("Invalid CRC");
+            break;
+          default:
+            Serial.println("Unknown Error");
         }
       }
+      
     } else if (dev.modbus_type == "TCP") {
       IPAddress ip = setupTCP(dev);
       EthernetClient client;
@@ -312,13 +380,6 @@ private:
         txBuffer[1] = lowByte(transactionId);
         txBuffer[2] = 0; // Protocol ID (0 for Modbus)
         txBuffer[3] = 0; // Protocol ID (0 for Modbus)
-        
-        uint8_t numRegisters = 1;
-        if (reg.data_type == UINT32 || reg.data_type == INT32 || reg.data_type == FLOAT32) {
-          numRegisters = 2;
-        } else if (reg.data_type == FLOAT64) {
-          numRegisters = 4;
-        }
         
         uint8_t len = 6; // Unit ID + Function Code + Address (2) + Quantity (2)
         txBuffer[4] = 0;
@@ -362,11 +423,26 @@ private:
               }
             }
             success = true;
+          } else {
+            Serial.print("Invalid Modbus TCP response for device ");
+            Serial.print(dev.name);
+            Serial.print(", register ");
+            Serial.println(reg.name);
           }
+        } else {
+          Serial.print("Modbus TCP timeout for device ");
+          Serial.print(dev.name);
+          Serial.print(", register ");
+          Serial.println(reg.name);
         }
         
         // Tutup koneksi
         client.stop();
+      } else {
+        Serial.print("Failed to connect to Modbus TCP device ");
+        Serial.print(dev.name);
+        Serial.print(" at ");
+        Serial.println(dev.ip_address);
       }
     }
     
@@ -375,6 +451,16 @@ private:
       Serial.println(reg.name);
       return 0.0;
     }
+    
+    // Debug info
+    Serial.print("Successfully read register ");
+    Serial.print(reg.name);
+    Serial.print(", Raw values: ");
+    for (uint8_t i = 0; i < numRegisters; i++) {
+      Serial.print(result[i], HEX);
+      Serial.print(" ");
+    }
+    Serial.println();
     
     // Konversi hasil sesuai tipe data
     switch (reg.data_type) {

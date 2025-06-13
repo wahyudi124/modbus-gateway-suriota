@@ -11,6 +11,7 @@
 #include <SPI.h>
 #include <SD.h>
 #include <Ethernet.h>
+#include <ModbusMaster.h>
 
 #include "Constants.h"
 #include "Cache.h"
