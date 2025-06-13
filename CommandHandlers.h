@@ -57,6 +57,8 @@ inline void processCommand(String command) {
 inline void handleModbusData(String action, JsonDocument& doc) {
   if (action == "CREATE") {
     createRecord(MODBUS_CONFIG_PATH, doc["data"]);
+    // Setelah perubahan konfigurasi, invalidasi cache
+    invalidateCache(MODBUS_CONFIG_PATH);
   } else if (action == "READ") {
     if (doc.containsKey("names") && doc["names"].as<bool>()) {
       readAllModbusConfigNames(MODBUS_CONFIG_PATH);
@@ -84,6 +86,8 @@ inline void handleModbusData(String action, JsonDocument& doc) {
     Serial.print("Extracted ID for UPDATE: ");
     Serial.println(id);
     updateRecord(MODBUS_CONFIG_PATH, id, doc["data"]);
+    // Setelah perubahan konfigurasi, invalidasi cache
+    invalidateCache(MODBUS_CONFIG_PATH);
   } else if (action == "DELETE") {
     if (!doc["data"].containsKey("id")) {
       sendResponse("Error: ID is required in data object");
@@ -97,6 +101,8 @@ inline void handleModbusData(String action, JsonDocument& doc) {
     Serial.print("Extracted ID for DELETE: ");
     Serial.println(id);
     deleteRecord(MODBUS_CONFIG_PATH, id);
+    // Setelah perubahan konfigurasi, invalidasi cache
+    invalidateCache(MODBUS_CONFIG_PATH);
   } else {
     sendResponse("Invalid action");
   }
@@ -105,6 +111,8 @@ inline void handleModbusData(String action, JsonDocument& doc) {
 inline void handleDevicesData(String action, JsonDocument& doc) {
   if (action == "CREATE") {
     createRecord(DEVICES_PATH, doc["data"]);
+    // Setelah perubahan konfigurasi, invalidasi cache
+    invalidateCache(DEVICES_PATH);
   } else if (action == "READ") {
     if (doc.containsKey("names") && doc["names"].as<bool>()) {
       readAllDeviceNames(DEVICES_PATH);
@@ -132,6 +140,8 @@ inline void handleDevicesData(String action, JsonDocument& doc) {
     Serial.print("Extracted ID for UPDATE: ");
     Serial.println(id);
     updateRecord(DEVICES_PATH, id, doc["data"]);
+    // Setelah perubahan konfigurasi, invalidasi cache
+    invalidateCache(DEVICES_PATH);
   } else if (action == "DELETE") {
     if (!doc["data"].containsKey("id")) {
       sendResponse("Error: ID is required in data object");
@@ -145,6 +155,8 @@ inline void handleDevicesData(String action, JsonDocument& doc) {
     Serial.print("Extracted ID for DELETE: ");
     Serial.println(id);
     deleteRecord(DEVICES_PATH, id);
+    // Setelah perubahan konfigurasi, invalidasi cache
+    invalidateCache(DEVICES_PATH);
   } else {
     sendResponse("Invalid action");
   }

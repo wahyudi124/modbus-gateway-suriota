@@ -9,7 +9,6 @@
 #include <freertos/queue.h>
 #include <freertos/semphr.h>
 #include <SPI.h>
-#include <SD.h>
 #include <Ethernet.h>
 #include <ModbusMaster.h>
 
@@ -36,6 +35,8 @@ const int CACHE_SIZE = 6;
 BLEServer* pServer = NULL;
 BLECharacteristic* pCharacteristic = NULL;
 bool deviceConnected = false;
+
+
 
 // Modbus handler
 ModbusHandler modbusHandler;
@@ -117,6 +118,7 @@ void modbusTask(void *parameter) {
   Serial.println("Modbus task started");
   
   for(;;) {
+    
     // Read all registers
     for (uint8_t i = 0; i < modbusHandler.getRegisterCount(); i++) {
       String regName = modbusHandler.getRegisterName(i);

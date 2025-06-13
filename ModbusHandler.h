@@ -6,6 +6,7 @@
 #include <SPI.h>
 #include <Ethernet.h>
 #include <ModbusMaster.h>
+#include <LittleFS.h>
 #include "Cache.h"
 
 // Tipe data yang didukung untuk register Modbus
@@ -63,9 +64,23 @@ public:
   }
   
   bool init(const char* devicesPath, const char* modbusConfigPath) {
-    // Load konfigurasi dari cache
+    // Bersihkan memori sebelumnya jika ada
+    if (devices) {
+      delete[] devices;
+      devices = nullptr;
+    }
+    
+    if (registers) {
+      delete[] registers;
+      registers = nullptr;
+    }
+    
+    deviceCount = 0;
+    registerCount = 0;
+    
+    // Load konfigurasi
     if (!loadConfig(devicesPath, modbusConfigPath)) {
-      Serial.println("Failed to load configuration from cache!");
+      Serial.println("Failed to load configuration!");
       return false;
     }
     
@@ -116,6 +131,19 @@ public:
   }
   
   float readRegister(uint8_t index) {
+    // Periksa apakah cache telah diinvalidasi, jika ya, reload konfigurasi
+    CacheEntry* devEntry = getCacheEntry("/devices.json");
+    CacheEntry* modbusEntry = getCacheEntry("/modbus_config.json");
+    
+    if ((devEntry && !devEntry->isValid) || (modbusEntry && !modbusEntry->isValid)) {
+      Serial.println("Cache invalidated, reloading configuration");
+      if (!loadConfig("/devices.json", "/modbus_config.json")) {
+        Serial.println("Failed to reload configuration!");
+        return 0.0;
+      }
+      Serial.println("Configuration reloaded successfully");
+    }
+    
     if (index >= registerCount) {
       return 0.0;
     }
@@ -149,14 +177,32 @@ private:
     DynamicJsonDocument devicesDoc(4096);
     DynamicJsonDocument configDoc(8192);
     
-    // Baca dari cache
-    if (!loadFromCache(devicesPath, devicesDoc)) {
-      Serial.println("Failed to load devices from cache");
+    // Baca langsung dari file, bukan dari cache
+    File deviceFile = LittleFS.open(devicesPath, "r");
+    if (!deviceFile) {
+      Serial.println("Failed to open devices file");
       return false;
     }
     
-    if (!loadFromCache(modbusConfigPath, configDoc)) {
-      Serial.println("Failed to load modbus config from cache");
+    DeserializationError deviceError = deserializeJson(devicesDoc, deviceFile);
+    deviceFile.close();
+    
+    if (deviceError) {
+      Serial.println("Failed to parse devices file");
+      return false;
+    }
+    
+    File configFile = LittleFS.open(modbusConfigPath, "r");
+    if (!configFile) {
+      Serial.println("Failed to open modbus config file");
+      return false;
+    }
+    
+    DeserializationError configError = deserializeJson(configDoc, configFile);
+    configFile.close();
+    
+    if (configError) {
+      Serial.println("Failed to parse modbus config file");
       return false;
     }
     
