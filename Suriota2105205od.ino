@@ -8,12 +8,16 @@
 #include <freertos/task.h>
 #include <freertos/queue.h>
 #include <freertos/semphr.h>
+#include <SPI.h>
+#include <SD.h>
+#include <Ethernet.h>
 
 #include "Constants.h"
 #include "Cache.h"
 #include "BLEHandlers.h"
 #include "FileOperations.h"
 #include "CommandHandlers.h"
+#include "ModbusHandler.h"
 #include "FreeRTOSTasks.h"
 
 // Global cache array for all configuration files
@@ -32,9 +36,13 @@ BLEServer* pServer = NULL;
 BLECharacteristic* pCharacteristic = NULL;
 bool deviceConnected = false;
 
+// Modbus handler
+ModbusHandler modbusHandler;
+
 // FreeRTOS handles
 TaskHandle_t bleTaskHandle = NULL;
 TaskHandle_t fileTaskHandle = NULL;
+TaskHandle_t modbusTaskHandle = NULL;
 SemaphoreHandle_t fileMutex = NULL;
 QueueHandle_t commandQueue = NULL;
 
@@ -56,6 +64,13 @@ void setup() {
   // Load all configurations to cache
   loadAllConfigToCache();
   
+  // Initialize Modbus handler
+  if (!modbusHandler.init("/devices.json", "/modbus_config.json")) {
+    Serial.println("Failed to initialize Modbus handler!");
+  } else {
+    Serial.println("Modbus handler initialized successfully");
+  }
+  
   // Create tasks
   xTaskCreatePinnedToCore(
     bleTask,          // Task function
@@ -76,9 +91,50 @@ void setup() {
     &fileTaskHandle,  // Task handle
     0                 // Core (0 = free core)
   );
+  
+  xTaskCreatePinnedToCore(
+    modbusTask,       // Task function
+    "Modbus Task",    // Name
+    8192,             // Stack size
+    NULL,             // Parameters
+    1,                // Priority
+    &modbusTaskHandle,// Task handle
+    0                 // Core (0 = free core)
+  );
 }
 
 void loop() {
   // Empty loop - tasks handle everything
   vTaskDelay(1000 / portTICK_PERIOD_MS);
+}
+
+// Implementasi modbusTask
+void modbusTask(void *parameter) {
+  // Delay to ensure initialization is complete
+  vTaskDelay(1000 / portTICK_PERIOD_MS);
+  
+  Serial.println("Modbus task started");
+  
+  for(;;) {
+    // Read all registers
+    for (uint8_t i = 0; i < modbusHandler.getRegisterCount(); i++) {
+      String regName = modbusHandler.getRegisterName(i);
+      float value = modbusHandler.readRegister(i);
+      
+      Serial.print(regName);
+      Serial.print(": ");
+      Serial.println(value);
+      
+      // Notify BLE clients if connected
+      // if (deviceConnected) {
+      //   String notification = "{\"" + regName + "\":" + String(value) + "}";
+      //   pCharacteristic->setValue(notification.c_str());
+      //   pCharacteristic->notify();
+      //   vTaskDelay(20 / portTICK_PERIOD_MS); // Small delay between notifications
+      // }
+    }
+    
+    // Delay before next reading cycle
+    vTaskDelay(5000 / portTICK_PERIOD_MS);
+  }
 }

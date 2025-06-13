@@ -19,9 +19,14 @@
 #include "FileOperations.h"
 #include "CommandHandlers.h"
 
+// Forward declaration
+class ModbusHandler;
+extern ModbusHandler modbusHandler;
+
 // FreeRTOS handles
 extern TaskHandle_t bleTaskHandle;
 extern TaskHandle_t fileTaskHandle;
+extern TaskHandle_t modbusTaskHandle;
 extern SemaphoreHandle_t fileMutex;
 extern QueueHandle_t commandQueue;
 
@@ -35,6 +40,7 @@ struct CommandData {
 // Task function prototypes
 void bleTask(void *parameter);
 void fileTask(void *parameter);
+void modbusTask(void *parameter);
 void initFiles();
 void loadAllConfigToCache();
 
@@ -216,5 +222,8 @@ void loadAllConfigToCache() {
     Serial.println("All configurations loaded to cache");
   }
 }
+
+// Modbus Task implementation
+void modbusTask(void *parameter);
 
 #endif // FREERTOS_TASKS_H
