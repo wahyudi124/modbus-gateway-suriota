@@ -336,8 +336,6 @@ private:
       numRegisters = 2;
     } else if (reg.data_type == FLOAT64) {
       numRegisters = 4;
-    }pe == FLOAT64) {
-      numRegisters = 4;
     }
     
     // Debug info
