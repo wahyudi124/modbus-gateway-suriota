@@ -7,6 +7,8 @@
 #include <Ethernet.h>
 #include <ModbusMaster.h>
 #include <LittleFS.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include "Cache.h"
 
 // Tipe data yang didukung untuk register Modbus
@@ -64,6 +66,8 @@ public:
   }
   
   bool init(const char* devicesPath, const char* modbusConfigPath) {
+    static bool ethernetInitialized = false;
+    
     // Bersihkan memori sebelumnya jika ada
     if (devices) {
       delete[] devices;
@@ -84,11 +88,14 @@ public:
       return false;
     }
     
-    // Inisialisasi Ethernet untuk koneksi TCP
-    byte mac[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED };
-    if (Ethernet.begin(mac) == 0) {
-      Serial.println("Failed to configure Ethernet using DHCP");
-      return false;
+    // Inisialisasi Ethernet hanya sekali untuk koneksi TCP
+    if (!ethernetInitialized) {
+      byte mac[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED };
+      if (Ethernet.begin(mac) == 0) {
+        Serial.println("Failed to configure Ethernet using DHCP");
+        return false;
+      }
+      ethernetInitialized = true;
     }
     
     Serial.print("IP address: ");
@@ -137,6 +144,25 @@ public:
     
     if ((devEntry && !devEntry->isValid) || (modbusEntry && !modbusEntry->isValid)) {
       Serial.println("Cache invalidated, reloading configuration");
+      // Perbarui cache terlebih dahulu
+      if (devEntry && !devEntry->isValid) {
+        File file = LittleFS.open("/devices.json", "r");
+        if (file) {
+          String content = file.readString();
+          file.close();
+          updateCache("/devices.json", content);
+        }
+      }
+      
+      if (modbusEntry && !modbusEntry->isValid) {
+        File file = LittleFS.open("/modbus_config.json", "r");
+        if (file) {
+          String content = file.readString();
+          file.close();
+          updateCache("/modbus_config.json", content);
+        }
+      }
+      
       if (!loadConfig("/devices.json", "/modbus_config.json")) {
         Serial.println("Failed to reload configuration!");
         return 0.0;
@@ -275,8 +301,8 @@ private:
       Serial2.begin(dev.baudrate, SERIAL_8O1, RX_PIN, TX_PIN);
     }
     
-    // Tunggu Serial2 siap
-    delay(100);
+    // Gunakan vTaskDelay untuk FreeRTOS yang lebih baik
+    vTaskDelay(10 / portTICK_PERIOD_MS);
     
     // Set slave ID
     node.begin(dev.id, Serial2);
@@ -309,6 +335,8 @@ private:
     if (reg.data_type == UINT32 || reg.data_type == INT32 || reg.data_type == FLOAT32 || reg.data_type == FLOAT) {
       numRegisters = 2;
     } else if (reg.data_type == FLOAT64) {
+      numRegisters = 4;
+    }pe == FLOAT64) {
       numRegisters = 4;
     }
     
