@@ -3,9 +3,8 @@
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
-#include <SPI.h>
-#include <Ethernet.h>
 #include <ModbusMaster.h>
+#include <ModbusEthernet.h>
 #include <LittleFS.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -58,7 +57,10 @@ struct RegisterConfig {
 
 class ModbusHandler {
 public:
-  ModbusHandler() : devices(nullptr), registers(nullptr), deviceCount(0), registerCount(0) {}
+  ModbusHandler() : devices(nullptr), registers(nullptr), deviceCount(0), registerCount(0) {
+    // Inisialisasi ModbusEthernet sebagai client
+    mbEthernet.client();
+  }
   
   ~ModbusHandler() {
     if (devices) delete[] devices;
@@ -96,6 +98,9 @@ public:
         return false;
       }
       ethernetInitialized = true;
+      
+      // Reinisialisasi ModbusEthernet setelah Ethernet diinisialisasi
+      mbEthernet.client();
     }
     
     Serial.print("IP address: ");
@@ -105,7 +110,7 @@ public:
     Serial2.begin(9600, SERIAL_8N1, RX_PIN, TX_PIN);
     
     // Tunggu Serial2 siap
-    delay(100);
+    vTaskDelay(10 / portTICK_PERIOD_MS);
     
     // Tampilkan informasi konfigurasi
     Serial.println("Modbus handler initialized with:");
@@ -198,6 +203,7 @@ private:
   uint8_t deviceCount;
   uint8_t registerCount;
   ModbusMaster node;
+  ModbusEthernet mbEthernet; // Objek ModbusEthernet untuk koneksi TCP
   
   bool loadConfig(const char* devicesPath, const char* modbusConfigPath) {
     DynamicJsonDocument devicesDoc(4096);
@@ -307,8 +313,8 @@ private:
     // Set slave ID
     node.begin(dev.id, Serial2);
     
-    // Set timeout yang lebih lama
-    //node.setTimeout(1000);
+    // ModbusMaster tidak memiliki setTimeout/setTimeOut
+    // Timeout diatur melalui parameter lain atau default library
     
     // Debug info
     Serial.print("Setting up RTU for device: ");
@@ -322,7 +328,12 @@ private:
   IPAddress setupTCP(const DeviceConfig& dev) {
     // Parse IP address
     IPAddress ip;
-    ip.fromString(dev.ip_address);
+    if (!ip.fromString(dev.ip_address)) {
+      Serial.print("Invalid IP address format: ");
+      Serial.println(dev.ip_address);
+      // Default to localhost if invalid
+      ip = IPAddress(127, 0, 0, 1);
+    }
     return ip;
   }
   
@@ -437,84 +448,64 @@ private:
       
     } else if (dev.modbus_type == "TCP") {
       IPAddress ip = setupTCP(dev);
-      EthernetClient client;
       
-      // Buat koneksi TCP
-      if (client.connect(ip, dev.port)) {
-        // Implementasi sederhana Modbus TCP
-        uint8_t txBuffer[12];
-        uint8_t rxBuffer[256];
-        uint8_t rxLen = 0;
-        
-        // Buat request Modbus TCP
-        uint16_t transactionId = random(65535);
-        txBuffer[0] = highByte(transactionId);
-        txBuffer[1] = lowByte(transactionId);
-        txBuffer[2] = 0; // Protocol ID (0 for Modbus)
-        txBuffer[3] = 0; // Protocol ID (0 for Modbus)
-        
-        uint8_t len = 6; // Unit ID + Function Code + Address (2) + Quantity (2)
-        txBuffer[4] = 0;
-        txBuffer[5] = len;
-        txBuffer[6] = dev.id; // Unit ID
-        txBuffer[7] = reg.function_code;
-        txBuffer[8] = highByte(reg.address);
-        txBuffer[9] = lowByte(reg.address);
-        txBuffer[10] = 0;
-        txBuffer[11] = numRegisters;
-        
-        // Kirim request
-        client.write(txBuffer, 12);
-        
-        // Tunggu respons
-        unsigned long startTime = millis();
-        while ((!client.available()) && (millis() - startTime < dev.connection_timeout)) {
-          delay(1);
-        }
-        
-        // Baca respons
-        if (client.available()) {
-          rxLen = 0;
-          while (client.available() && rxLen < 256) {
-            rxBuffer[rxLen++] = client.read();
-          }
-          
-          // Verifikasi respons
-          if (rxLen >= 9 && 
-              rxBuffer[0] == txBuffer[0] && rxBuffer[1] == txBuffer[1] && // Transaction ID
-              rxBuffer[6] == dev.id && rxBuffer[7] == reg.function_code) {
-            
-            // Ambil data
-            if (reg.function_code == 1 || reg.function_code == 2) {
-              // Coils atau Discrete Inputs
-              result[0] = rxBuffer[9];
-            } else if (reg.function_code == 3 || reg.function_code == 4) {
-              // Holding atau Input Registers
-              for (uint8_t i = 0; i < numRegisters; i++) {
-                result[i] = (rxBuffer[9 + i * 2] << 8) | rxBuffer[10 + i * 2];
-              }
-            }
-            success = true;
-          } else {
-            Serial.print("Invalid Modbus TCP response for device ");
-            Serial.print(dev.name);
-            Serial.print(", register ");
-            Serial.println(reg.name);
-          }
-        } else {
-          Serial.print("Modbus TCP timeout for device ");
+      // Cek koneksi ke server Modbus TCP
+      if (!mbEthernet.isConnected(ip)) {
+        // Jika belum terhubung, coba koneksi
+        if (!mbEthernet.connect(ip, dev.port)) {
+          Serial.print("Failed to connect to Modbus TCP device ");
           Serial.print(dev.name);
-          Serial.print(", register ");
-          Serial.println(reg.name);
+          Serial.print(" at ");
+          Serial.println(dev.ip_address);
+          return 0.0;
         }
-        
-        // Tutup koneksi
-        client.stop();
-      } else {
-        Serial.print("Failed to connect to Modbus TCP device ");
+      }
+      
+      // Baca register sesuai function code dengan unit ID sebagai parameter
+      switch (reg.function_code) {
+        case 1: // Read Coils
+          {
+            bool coilValue = false;
+            // Gunakan callback nullptr dan unit ID sebagai parameter terakhir
+            if (mbEthernet.readCoil(ip, reg.address, &coilValue, 1, nullptr, dev.id)) {
+              result[0] = coilValue ? 1 : 0;
+              success = true;
+            }
+          }
+          break;
+          
+        case 2: // Read Discrete Inputs
+          {
+            bool inputValue = false;
+            if (mbEthernet.readIsts(ip, reg.address, &inputValue, 1, nullptr, dev.id)) {
+              result[0] = inputValue ? 1 : 0;
+              success = true;
+            }
+          }
+          break;
+          
+        case 3: // Read Holding Registers
+          if (mbEthernet.readHreg(ip, reg.address, result, numRegisters, nullptr, dev.id)) {
+            success = true;
+          }
+          break;
+          
+        case 4: // Read Input Registers
+          if (mbEthernet.readIreg(ip, reg.address, result, numRegisters, nullptr, dev.id)) {
+            success = true;
+          }
+          break;
+      }
+      
+      // Proses task Modbus
+      mbEthernet.task();
+      
+      // Jika gagal membaca
+      if (!success) {
+        Serial.print("Modbus TCP error for device ");
         Serial.print(dev.name);
-        Serial.print(" at ");
-        Serial.println(dev.ip_address);
+        Serial.print(", register ");
+        Serial.println(reg.name);
       }
     }
     
